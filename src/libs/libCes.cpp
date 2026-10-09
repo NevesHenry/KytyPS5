@@ -23,11 +23,20 @@ namespace LibCes {
 
 LIB_VERSION("Ces", 1, "Ces", 1, 1);
 
+// The single-byte converters pick their table by profile address.
+static constexpr uint8_t CP1252_PROFILE     = 0;
+static constexpr uint8_t ISO8859_15_PROFILE = 1;
+
 static const uint8_t* KYTY_SYSV_ABI CesRefersUcsProfileCp1252() {
 	PRINT_NAME();
 
-	static const uint8_t profile = 0;
-	return &profile;
+	return &CP1252_PROFILE;
+}
+
+static const uint8_t* KYTY_SYSV_ABI CesRefersUcsProfileIso8859_15() {
+	PRINT_NAME();
+
+	return &ISO8859_15_PROFILE;
 }
 
 static uint32_t CesDecodeUtf8(const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len) {
@@ -73,12 +82,12 @@ static uint32_t CesDecodeUtf8(const uint8_t* utf8, uint32_t utf8max, uint32_t* u
 	return 0xfffd;
 }
 
-struct Cp1252Mapping {
-	uint8_t  cp1252;
+struct SbcMapping {
+	uint8_t  sbc;
 	uint32_t unicode;
 };
 
-static constexpr Cp1252Mapping CP1252_EXTENDED_MAP[] = {
+static constexpr SbcMapping CP1252_EXTENDED_MAP[] = {
     {0x80, 0x20ac}, {0x82, 0x201a}, {0x83, 0x0192}, {0x84, 0x201e}, {0x85, 0x2026}, {0x86, 0x2020},
     {0x87, 0x2021}, {0x88, 0x02c6}, {0x89, 0x2030}, {0x8a, 0x0160}, {0x8b, 0x2039}, {0x8c, 0x0152},
     {0x8e, 0x017d}, {0x91, 0x2018}, {0x92, 0x2019}, {0x93, 0x201c}, {0x94, 0x201d}, {0x95, 0x2022},
@@ -93,7 +102,7 @@ static uint8_t CesUnicodeToCp1252(uint32_t code) {
 
 	for (const auto& map: CP1252_EXTENDED_MAP) {
 		if (map.unicode == code) {
-			return map.cp1252;
+			return map.sbc;
 		}
 	}
 	return '?';
@@ -105,7 +114,35 @@ static uint32_t CesCp1252ToUnicode(uint8_t sbc) {
 	}
 
 	for (const auto& map: CP1252_EXTENDED_MAP) {
-		if (map.cp1252 == sbc) {
+		if (map.sbc == sbc) {
+			return map.unicode;
+		}
+	}
+	return sbc;
+}
+
+// ISO-8859-15 is Latin-1 with these eight bytes reassigned.
+static constexpr SbcMapping ISO8859_15_REPLACED_MAP[] = {
+    {0xa4, 0x20ac}, {0xa6, 0x0160}, {0xa8, 0x0161}, {0xb4, 0x017d},
+    {0xb8, 0x017e}, {0xbc, 0x0152}, {0xbd, 0x0153}, {0xbe, 0x0178},
+};
+
+static uint8_t CesUnicodeToIso8859_15(uint32_t code) {
+	for (const auto& map: ISO8859_15_REPLACED_MAP) {
+		if (map.unicode == code) {
+			return map.sbc;
+		}
+		// The Latin-1 characters that lost their byte have no encoding.
+		if (map.sbc == code) {
+			return '?';
+		}
+	}
+	return code <= 0xff ? static_cast<uint8_t>(code) : '?';
+}
+
+static uint32_t CesIso8859_15ToUnicode(uint8_t sbc) {
+	for (const auto& map: ISO8859_15_REPLACED_MAP) {
+		if (map.sbc == sbc) {
 			return map.unicode;
 		}
 	}
@@ -156,7 +193,7 @@ static int KYTY_SYSV_ABI CesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uin
 	if (utf8_len != nullptr) {
 		*utf8_len = local_len;
 	}
-	*sbc = CesUnicodeToCp1252(code);
+	*sbc = profile == &ISO8859_15_PROFILE ? CesUnicodeToIso8859_15(code) : CesUnicodeToCp1252(code);
 
 	return 0;
 }
@@ -169,8 +206,9 @@ static int KYTY_SYSV_ABI CesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8
 		return -1;
 	}
 
-	const auto code = CesCp1252ToUnicode(sbc);
-	const auto len  = CesEncodeUtf8(code, utf8, utf8max);
+	const auto code =
+	    profile == &ISO8859_15_PROFILE ? CesIso8859_15ToUnicode(sbc) : CesCp1252ToUnicode(sbc);
+	const auto len = CesEncodeUtf8(code, utf8, utf8max);
 	if (utf8_len != nullptr) {
 		*utf8_len = len;
 	}
@@ -380,6 +418,7 @@ LIB_DEFINE(InitCes_1) {
 	LIB_FUNC("r7Sr1i7KLus", LibCes::CesMbcsStrGetUtf8Len);
 	LIB_FUNC("yGKn6vdYInc", LibCes::CesMbcsStrToUtf8Str);
 	LIB_FUNC("LPzYZ+FR0BI", LibCes::CesRefersUcsProfileCp1252);
+	LIB_FUNC("NLW0QcvJY-E", LibCes::CesRefersUcsProfileIso8859_15);
 	LIB_FUNC("3Q1gOWWarcw", LibCes::CesUtf8ToSbc);
 	LIB_FUNC("xTd54EEL1Ao", LibCes::CesSbcToUtf8);
 }

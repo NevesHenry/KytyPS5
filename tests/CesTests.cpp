@@ -113,6 +113,44 @@ void TestErrors(CesContext* context) {
 		CHECK(consumed == 1 && produced == 1);
 	}
 }
+
+void TestIso8859_15Profile() {
+	const auto* cp1252 = CesRefersUcsProfileCp1252();
+	const auto* latin9 = CesRefersUcsProfileIso8859_15();
+	CHECK(latin9 != nullptr && latin9 != cp1252);
+
+	struct Case {
+		uint8_t     sbc;
+		std::string utf8;
+	};
+	const Case cases[] = {
+	    {'A', "A"},         {0xa4, "\xe2\x82\xac"}, {0xa6, "\xc5\xa0"}, {0xa8, "\xc5\xa1"},
+	    {0xb4, "\xc5\xbd"}, {0xb8, "\xc5\xbe"},     {0xbc, "\xc5\x92"}, {0xbd, "\xc5\x93"},
+	    {0xbe, "\xc5\xb8"}, {0xa3, "\xc2\xa3"},     {0xe9, "\xc3\xa9"},
+	};
+	for (const auto& test: cases) {
+		std::array<uint8_t, 4> utf8 {};
+		uint32_t               length = 0;
+		CHECK(CesSbcToUtf8(latin9, test.sbc, utf8.data(), utf8.size(), &length) == 0);
+		CHECK(length == test.utf8.size());
+		CHECK(std::memcmp(utf8.data(), test.utf8.data(), test.utf8.size()) == 0);
+
+		uint8_t sbc = 0;
+		CHECK(CesUtf8ToSbc(reinterpret_cast<const uint8_t*>(test.utf8.data()),
+		                   static_cast<uint32_t>(test.utf8.size()), &length, latin9, &sbc) == 0);
+		CHECK(length == test.utf8.size());
+		CHECK(sbc == test.sbc);
+	}
+
+	// The Latin-1 currency sign lost its byte to the euro sign.
+	uint8_t sbc = 0;
+	CHECK(CesUtf8ToSbc(reinterpret_cast<const uint8_t*>("\xc2\xa4"), 2, nullptr, latin9, &sbc) ==
+	      0);
+	CHECK(sbc == '?');
+	CHECK(CesUtf8ToSbc(reinterpret_cast<const uint8_t*>("\xe2\x82\xac"), 3, nullptr, cp1252,
+	                   &sbc) == 0);
+	CHECK(sbc == 0x80);
+}
 } // namespace
 
 int main() {
@@ -123,5 +161,6 @@ int main() {
 	TestMappingsAndMeasurement(&context);
 	TestPartialOutput(&context);
 	TestErrors(&context);
+	TestIso8859_15Profile();
 	return failures == 0 ? 0 : 1;
 }
