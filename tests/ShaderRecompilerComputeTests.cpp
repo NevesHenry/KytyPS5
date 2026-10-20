@@ -18901,6 +18901,16 @@ public:
                                          integer_range, integer_clear);
       RenderExecutorTestAccess::DrawAuto(
           executor, scheduler.Current(), {.vertex_count = 3, .instance_count = 1});
+      {
+        const auto u = ReadCachedTexel(name, context, uint_target.image_id, {}, {extent, extent, 1});
+        const auto i = ReadCachedTexel(name, context, sint_target.image_id, {}, {extent, extent, 1});
+        size_t u_bad = 0, i_bad = 0;
+        for (size_t k = 0; k < u.size(); ++k) u_bad += u[k] != uint_word;
+        for (size_t k = 0; k < i.size(); ++k) i_bad += i[k] != sint_words[k % 2];
+        std::printf("[gpu]     IntegerTargets uint=%08x (bad %zu/%zu) sint=%08x,%08x (bad %zu/%zu) masks=%u,%u\n",
+                    u[0], u_bad, u.size(), i[0], i[1], i_bad, i.size(),
+                    unsigned(pixel.target_uint_mask), unsigned(pixel.target_sint_mask));
+      }
       Require(name, "UINT target words",
               ReadCachedTexel(name, context, uint_target.image_id, {}, {extent, extent, 1}) ==
                   std::vector<u32>(extent * extent, uint_word),
@@ -49660,6 +49670,11 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::strcmp(argv[1], "--image-upload-only") == 0) {
     VulkanHarness vulkan;
     vulkan.CheckLargeSparseImageUpload();
+    return 0;
+  }
+  if (argc == 2 && std::strcmp(argv[1], "--local-rasterization-only") == 0) {
+    VulkanHarness vulkan;
+    vulkan.CheckRasterization(false);
     return 0;
   }
   if (argc == 2 && std::strcmp(argv[1], "--image-overlap-only") == 0) {
