@@ -18826,6 +18826,92 @@ public:
       }
       Require(name, "packed rounding program distinction", half_up_program != truncate_program,
               "half-up and truncate exports shared one shader specialization");
+
+      // Raw 32-bit exports reach UINT and SINT targets unchanged, including words
+      // that are float denormals or NaNs.
+      constexpr uint64_t uint_address = depth_address + 0x2a000;
+      constexpr uint64_t sint_address = depth_address + 0x2c000;
+      constexpr u32 uint_word = 0x00000005u;
+      static constexpr std::array<u32, 2> sint_words{0x80000001u, 0x7f800001u};
+      static const auto integer_pixel = [] {
+        std::vector<u32> code;
+        AppendVMovLiteral(&code, 0, uint_word);
+        AppendVMovLiteral(&code, 1, sint_words[0]);
+        AppendVMovLiteral(&code, 2, sint_words[1]);
+        code.push_back(EncodeExp0(0, 0x1, false));
+        code.push_back(EncodeExp1(0, 0, 0, 0));
+        code.push_back(EncodeExp0(1, 0x3));
+        code.push_back(EncodeExp1(1, 2, 0, 0));
+        AppendEnd(&code);
+        return code;
+      }();
+      registers.Reset();
+      registers.SetViewportTransformControl(0x300);
+      registers.SetViewportScaleOffset(0, extent / 2, extent / 2, extent / 2, extent / 2, 1, 0);
+      registers.SetViewportZMax(0, 1);
+      registers.SetScreenScissor(0, 0, extent, extent);
+      registers.SetWindowScissor(0, 0, extent, extent, false);
+      registers.SetGenericScissor(0, 0, extent, extent, false);
+      registers.SetViewportScissor(0, 0, 0, extent, extent, false);
+      registers.SetRenderTargetMask(0x31);
+      registers.SetShaderMask(0x31);
+      registers.SetPsInControl(0);
+      registers.SetTargetOutputMode(0, 1); // SPI_SHADER_32_R
+      registers.SetTargetOutputMode(1, 2); // SPI_SHADER_32_GR
+      for (const auto slot : {0u, 1u}) {
+        registers.SetColorBase(slot, {.addr = slot == 0 ? uint_address : sint_address});
+        registers.SetColorInfo(slot,
+            {.format = slot == 0 ? Prospero::ChannelLayout::k32 : Prospero::ChannelLayout::k32_32,
+             .channel_type = slot == 0 ? Prospero::ChannelType::kUInt : Prospero::ChannelType::kSInt,
+             .channel_order = Prospero::ChannelOrder::kStandard});
+        registers.SetColorAttrib2(slot, {.height = extent - 1, .width = extent - 1});
+        registers.SetColorAttrib3(slot, {.tile_mode = Prospero::TileMode::kLinear, .dimension = 1});
+      }
+      const auto integer_ps_address = reinterpret_cast<uint64_t>(integer_pixel.data());
+      ShaderMapUserData(integer_ps_address, {.type = Prospero::ShaderBinaryType::kPs,
+          .code_size_bytes = static_cast<u32>(integer_pixel.size() * sizeof(u32))});
+      shaders.SetEsShaderBase(vertex_address);
+      shaders.SetGsShaderResource2({});
+      shaders.SetPsShaderBase(integer_ps_address);
+      user_config.SetPrimitiveType(Prospero::PrimitiveType::kTriList);
+      native_vertex_regs.es_regs.data_addr = vertex_address;
+      native_pixel_regs.ps_regs.data_addr = integer_ps_address;
+      (void)context.GetPipelineCache().GetGraphicsPrograms(
+          native_vertex_regs, native_pixel_regs, registers.GetShaderRegisters(),
+          registers, user_config, export_mapping, true, native_vertex_info, pixel);
+      Require(name, "integer target exports",
+              pixel.target_uint_mask == 1u && pixel.target_sint_mask == 2u &&
+                  pixel.target_packed_unorm_mask == 0u,
+              "raw 32-bit exports did not follow their UINT and SINT targets");
+      RenderColorInfo uint_target{}, sint_target{};
+      RenderExecutorTestAccess::ResolveRenderColorTarget(
+          executor, scheduler.Current(), uint_target, 0);
+      RenderExecutorTestAccess::ResolveRenderColorTarget(
+          executor, scheduler.Current(), sint_target, 1);
+      Require(name, "integer target storage",
+              uint_target.desc.info.pixel_format == vk::Format::eR32Uint &&
+                  sint_target.desc.info.pixel_format == vk::Format::eR32G32Sint,
+              "integer render targets did not use integer host formats");
+      vk::ClearValue integer_clear{};
+      integer_clear.color.uint32 = std::array<u32, 4>{0xdeadbeefu, 0xdeadbeefu, 0xdeadbeefu, 0xdeadbeefu};
+      const vk::ImageSubresourceRange integer_range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+      TextureCacheTestAccess::ClearImage(cache, scheduler.Current(), uint_target.image_id,
+                                         integer_range, integer_clear);
+      TextureCacheTestAccess::ClearImage(cache, scheduler.Current(), sint_target.image_id,
+                                         integer_range, integer_clear);
+      RenderExecutorTestAccess::DrawAuto(
+          executor, scheduler.Current(), {.vertex_count = 3, .instance_count = 1});
+      Require(name, "UINT target words",
+              ReadCachedTexel(name, context, uint_target.image_id, {}, {extent, extent, 1}) ==
+                  std::vector<u32>(extent * extent, uint_word),
+              "32_R export to a UINT target did not store the exported word");
+      std::vector<u32> sint_expected;
+      for (u32 i = 0; i < extent * extent; ++i)
+        sint_expected.insert(sint_expected.end(), sint_words.begin(), sint_words.end());
+      Require(name, "SINT target words",
+              ReadCachedTexel(name, context, sint_target.image_id, {}, {extent, extent, 1}) ==
+                  sint_expected,
+              "32_GR export to a SINT target did not store the exported words");
       DestroyBuffer(&packed_output);
       m_device.destroySampler(packed_sampler);
       DestroyBuffer(&stencil_readback);

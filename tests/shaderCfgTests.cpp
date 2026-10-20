@@ -13710,6 +13710,46 @@ void TestNewShaderRecompilerExpPixelOutputs() {
   Check(CountSourceOccurrences(unorm16_ba_source, "UnpackUnorm2x16") == 1u,
         "compressed UNORM16 BA-only export did not unpack VSRC1");
   CheckSpirvBinaryValidates(unorm16_ba_result.spirv);
+
+  // SPI_SHADER_32_R exports raw dwords; the output type follows the target.
+  const uint32_t raw32_shader[] = {
+      EncodeExp0(0x00, 0x1),
+      EncodeExp1(0, 0, 0, 0),
+      0xbf810000u,
+  };
+  ShaderPixelInputInfo float32_info;
+  float32_info.target_output_mode[0] = 1;
+  options.input_info.pixel = &float32_info;
+  auto float32_result = RecompileForTest(raw32_shader, options);
+  const auto float32_source = DisassembleSpirvBinary(float32_result.spirv);
+  Check((float32_source.find("OpVariable %_ptr_Output_v4float Output") != std::string::npos),
+        "32_R export to a float target did not use a float output");
+  CheckSpirvBinaryValidates(float32_result.spirv);
+
+  ShaderPixelInputInfo uint32_info;
+  uint32_info.target_output_mode[0] = 1;
+  uint32_info.target_uint_mask = 1;
+  options.input_info.pixel = &uint32_info;
+  auto uint32_result = RecompileForTest(raw32_shader, options);
+  const auto uint32_source = DisassembleSpirvBinary(uint32_result.spirv);
+  Check((uint32_source.find("OpVariable %_ptr_Output_v4uint Output") != std::string::npos),
+        "32_R export to a UINT target did not use an unsigned integer output");
+  Check((uint32_source.find("OpBitcast %v4float") == std::string::npos),
+        "32_R export to a UINT target passed through a float vector");
+  CheckSpirvBinaryValidates(uint32_result.spirv);
+
+  ShaderPixelInputInfo sint32_info;
+  sint32_info.target_output_mode[0] = 1;
+  sint32_info.target_sint_mask = 1;
+  options.input_info.pixel = &sint32_info;
+  auto sint32_result = RecompileForTest(raw32_shader, options);
+  const auto sint32_source = DisassembleSpirvBinary(sint32_result.spirv);
+  Check((sint32_source.find("OpVariable %_ptr_Output_v4int Output") != std::string::npos),
+        "32_R export to a SINT target did not use a signed integer output");
+  Check((sint32_source.find("OpBitcast %v4float") == std::string::npos) &&
+            (sint32_source.find("OpBitcast %v4int") != std::string::npos),
+        "32_R export to a SINT target did not reinterpret the exported dwords");
+  CheckSpirvBinaryValidates(sint32_result.spirv);
 }
 
 void TestAutomaticObjectPrimitiveId() {
