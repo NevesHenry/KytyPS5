@@ -53,6 +53,11 @@ uint8_t RemapSourceAlphaFactor(uint8_t factor) {
 	}
 }
 
+// SPI_SHADER_32_R, 32_GR, 32_AR and 32_ABGR export dwords that the CB stores unconverted.
+bool IsRaw32ColorExport(uint8_t mode) {
+	return mode == 1u || mode == 2u || mode == 3u || mode == 9u;
+}
+
 vk::PolygonMode ResolvePolygonMode(const HW::ModeControl& mode, bool cull_front, bool cull_back) {
 	// CxPrimitiveSetup::PolygonMode disables both per-face modes when it is zero.
 	if (mode.poly_mode == 0) {
@@ -722,6 +727,13 @@ PipelineCache::GraphicsPrograms PipelineCache::GetGraphicsPrograms(
 			const auto& rt = context.GetRenderTarget(slot);
 			const auto target_mask = render_target_mask_slot(context.GetRenderTargetMask(), slot);
 			if (rt.base.addr == 0 || target_mask == 0u) continue;
+			if (IsRaw32ColorExport(pixel_info.target_output_mode[export_index])) {
+				if (rt.info.channel_type == Prospero::ChannelType::kUInt) {
+					pixel_info.target_uint_mask |= 1u << export_index;
+				} else if (rt.info.channel_type == Prospero::ChannelType::kSInt) {
+					pixel_info.target_sint_mask |= 1u << export_index;
+				}
+			}
 			const auto format = Prospero::ResolveRenderTargetFormat(rt.info.format, rt.info.channel_type);
 			if (format.buffer_format != Prospero::BufferFormat::k11_11_10UNorm) continue;
 			const auto mapping = pixel_info.target_export_mapping[export_index];
@@ -758,6 +770,7 @@ PipelineCache::GraphicsPrograms PipelineCache::GetGraphicsPrograms(
 			pixel_info.target_export_mapping[1] = pixel_info.target_export_mapping[0];
 		} else if (blend.enable && !context.GetRenderTarget(0).info.blend_bypass &&
 		           pixel_info.target_output_mode[0] != 0 && pixel_info.target_output_mode[0] != 7 &&
+		           ((pixel_info.target_uint_mask | pixel_info.target_sint_mask) & 1u) == 0u &&
 		           std::all_of(std::begin(pixel_info.target_output_mode) + 1,
 		                       std::end(pixel_info.target_output_mode),
 		                       [](uint8_t mode) { return mode == 0; })) {
