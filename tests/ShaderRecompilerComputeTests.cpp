@@ -17799,7 +17799,9 @@ public:
       }
       const vk::Bool32 write = true;
       cmd.setColorWriteEnableEXT(1, &write);
-      cmd.setAttachmentFeedbackLoopEnableEXT(feedback_aspects);
+      if (m_feedback_supported) {
+        cmd.setAttachmentFeedbackLoopEnableEXT(feedback_aspects);
+      }
       const vk::DeviceSize offset = 0;
       cmd.bindVertexBuffers(0, 1, &buffer.buffer, &offset);
       cmd.draw(vertex_count, 1, 0, 0);
