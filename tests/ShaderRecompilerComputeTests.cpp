@@ -1010,6 +1010,10 @@ void RequireVk(const char *shader_name, const char *stage, vk::Result result,
 
 void Require(const char *shader_name, const char *stage, bool value,
              const std::string &message) {
+  static const bool trace = std::getenv("KYTY_LOCAL_TRACE") != nullptr;
+  if (trace) {
+    std::printf("[trace] %s / %s\n", shader_name, stage);
+  }
   if (!value) {
     Fail(shader_name, stage, message);
   }
