@@ -20475,6 +20475,7 @@ public:
 
 private:
   bool m_rasterization_supported = true;
+  bool m_feedback_supported = true;
   u32   m_skipped_cases          = 0;
 
   RenderContext &Renderer() {
@@ -20510,7 +20511,7 @@ private:
     m_runtime_context.queue = m_queue;
     m_runtime_context.shader_image_int64_atomics_enabled = true;
     m_runtime_context.maintenance8_enabled = true;
-    m_runtime_context.attachment_feedback_loop_enabled = m_rasterization_supported;
+    m_runtime_context.attachment_feedback_loop_enabled = m_rasterization_supported && m_feedback_supported;
     m_runtime_context.provoking_vertex_last_enabled = m_rasterization_supported;
     const vk::PhysicalDeviceImageFormatInfo2 block_texel_view_info{
         .format = vk::Format::eBc1RgbaUnormBlock,
@@ -20717,9 +20718,9 @@ private:
                                 available_depth_clip.depthClipEnable &&
                                 available_clip_control.depthClipControl &&
                                 available_color_write.colorWriteEnable &&
-                                available_feedback_layout.attachmentFeedbackLoopLayout &&
-                                available_feedback_dynamic.attachmentFeedbackLoopDynamicState &&
                                 available_provoking_vertex.provokingVertexLast;
+    m_feedback_supported = available_feedback_layout.attachmentFeedbackLoopLayout && available_feedback_dynamic.attachmentFeedbackLoopDynamicState;
+    std::printf("[host]    local: feedback loop extensions %s\n", m_feedback_supported ? "on" : "off");
     if (!m_rasterization_supported) {
       std::printf(
           "[host]    ProductionRasterization   unavailable, rasterization cases "
@@ -20775,11 +20776,14 @@ private:
       clip_control.depthClipControl = true;
       color_write.pNext = &clip_control;
       color_write.colorWriteEnable = true;
-      feedback_layout.pNext = &color_write;
-      feedback_layout.attachmentFeedbackLoopLayout = true;
-      feedback_dynamic.pNext = &feedback_layout;
-      feedback_dynamic.attachmentFeedbackLoopDynamicState = true;
-      provoking_vertex.pNext = &feedback_dynamic;
+      provoking_vertex.pNext = &color_write;
+      if (m_feedback_supported) {
+        feedback_layout.pNext = &color_write;
+        feedback_layout.attachmentFeedbackLoopLayout = true;
+        feedback_dynamic.pNext = &feedback_layout;
+        feedback_dynamic.attachmentFeedbackLoopDynamicState = true;
+        provoking_vertex.pNext = &feedback_dynamic;
+      }
       provoking_vertex.provokingVertexLast = available_provoking_vertex.provokingVertexLast;
     }
     vk::PhysicalDeviceImageViewMinLodFeaturesEXT min_lod{};
@@ -20817,9 +20821,11 @@ private:
       device_extensions.push_back(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
       device_extensions.push_back(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
       device_extensions.push_back(VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+      if (m_feedback_supported) {
       device_extensions.push_back(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
       device_extensions.push_back(
           VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME);
+      }
       device_extensions.push_back(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
     }
     device_info.enabledExtensionCount =
